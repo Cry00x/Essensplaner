@@ -31,3 +31,14 @@ Eine PWA braucht eine öffentliche HTTPS-Adresse. Den ganzen Ordner auf einen st
     js/store.js     Speicherung (IndexedDB)
     js/sync.js      optionale Synchronisierung mit eigenem Speicher
     js/app.js       Oberfläche;  css/style.css  Design
+
+## Neu in Version 2
+
+- **Echte Rezeptfotos**: Beim ersten Start sucht die App im Browser für jedes Rezept ein frei lizenziertes Foto (Wikimedia Commons, ohne Schlüssel; optional Pexels mit eigenem kostenlosen Schlüssel unter „Mehr → Fotos & Import“). Jeder Treffer wird streng geprüft (JPEG, Mindestgröße, Seitenverhältnis, Lizenz CC0/CC BY/CC BY-SA/gemeinfrei, Titel muss zum Gericht passen). Das Foto wird dauerhaft dem Rezept zugeordnet, vom Service Worker offline vorgehalten und mit Urheber/Lizenz/Link angezeigt. Ähnliche Gerichte sind als „Beispielfoto“ gekennzeichnet. Ohne sicheren Treffer erscheint ein neutraler Platzhalter – nie ein falsches Gericht. Eigene Fotos lassen sich je Rezept hochladen.
+- **Planung**: keine doppelten Gerichte pro Woche (auch nicht beim manuellen Tauschen), kürzlich gekochte Gerichte werden gemieden, nur aktive Rezepte werden geplant, einzelne Gerichte tauschen oder die ganze Woche neu würfeln.
+- **Rezeptverwaltung**: alle Rezepte (auch mitgelieferte) bearbeiten, löschen, aktivieren/deaktivieren, Küchenrichtung zuordnen, Original wiederherstellen.
+- **Import per Link** (schema.org-Daten, z. B. Chefkoch, Lecker, EAT SMARTER, Rezeptwelt): Zutaten → Katalog (laktosefrei ersetzt, unbekannte Zutaten mit Preis 0 €), Umrechnung auf 4 Portionen, Quelle gespeichert, Duplikaterkennung, Originalbild nur mit Opt-in. Fallbacks: Seitenquelltext einfügen oder manuell eingeben. Der Abruf läuft über einen öffentlichen CORS-Proxy (einstellbar).
+- **13 Küchen** inkl. Filter in Rezepten und Planung sowie „Überrasch mich international“.
+- **Familienplan**: gemeinsamer Plan, Einkaufsliste, Budget, Vorschläge mit Abstimmung, Ernährungsprofile (alle Ausschlüsse gelten für alle), Rollen Admin/Mitglied/Gast, Einladungslink. Benötigt einen gemeinsamen JSON-Speicher (z. B. Firebase Realtime Database). Rollen werden in der App durchgesetzt, sind aber keine Sicherheitsgrenze gegen direkten Zugriff auf den Speicher.
+
+Neue Tests: `node tests/importer.test.js`, `node tests/family.test.js`, `python3 tests/family-ui.test.py`, `python3 tests/migration.test.py` (Server vorher: `python3 -m http.server 8765`).
