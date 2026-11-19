@@ -321,5 +321,5 @@
     [['reis', 250], ['paprika', 1], ['zucchini', 250], ['mais', 140], ['erbsen', 150], ['sahne', 150], ['milch', 100], ['kaese', 150], ['zwiebeln', 100], ['oel', 10], ['kraeuter', 1], ['salz', 1], ['pfeffer', 1]],
     ['Backofen auf 200 °C vorheizen. Reis 10 Minuten in Salzwasser vorkochen.', 'Gemüse würfeln und mit Zwiebeln im Öl 5 Minuten anbraten.', 'Reis, Gemüse, Mais und Erbsen in eine Form geben, mit laktosefreier Sahne und Milch, Kräutern, Salz und Pfeffer übergießen.', 'Mit laktosefreiem Käse bestreuen und 25 Minuten überbacken.']);
 
-  g.DATA = { VERSION: 1, ING, RECIPES };
+  g.DATA = { VERSION: 2, ING, RECIPES };
 })(typeof globalThis !== 'undefined' ? globalThis : self);

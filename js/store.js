@@ -80,15 +80,19 @@
   S.putRecipe = r => { S.cache.recipes[r.id] = r; return persist('recipes', 'put', r); };
   S.delRecipe = id => { delete S.cache.recipes[id]; return persist('recipes', 'delete', id); };
 
-  S.exportAll = () => JSON.parse(JSON.stringify({ app: 'essensplaner', version: 1, exportedAt: new Date().toISOString(), data: S.cache }));
+  // Familien-Zugang (Adresse, Schlüssel, Gerätekennung) gehört zu diesem Gerät und wird weder exportiert noch synchronisiert/überschrieben
+  const LOCAL_ONLY = ['family', 'famdoc', 'famLast'];
+  S.exportAll = () => { const o = JSON.parse(JSON.stringify({ app: 'essensplaner', version: 1, exportedAt: new Date().toISOString(), data: S.cache })); LOCAL_ONLY.forEach(k => delete o.data.kv[k]); return o; };
 
   S.importAll = async function (obj) {
     if (!obj || obj.app !== 'essensplaner' || !obj.data) throw new Error('Keine gültige Essensplaner-Sicherung.');
+    const keep = {}; LOCAL_ONLY.forEach(k => { if (k in S.cache.kv) keep[k] = S.cache.kv[k]; });
     await S.resetAll();
     const d = obj.data;
     for (const [k, v] of Object.entries(d.kv || {})) await S.set(k, v);
     for (const p of Object.values(d.plans || {})) await S.putPlan(p);
     for (const r of Object.values(d.recipes || {})) await S.putRecipe(r);
+    for (const [k, v] of Object.entries(keep)) await S.set(k, v);
   };
 
   S.resetAll = async function () {

@@ -32,7 +32,7 @@
   E.defaultSettings = () => ({
     persons: 4, budget: 120, market: 'Aldi Süd', priceFactor: 1, vegTarget: 3, maxTime: 45,
     intol: { laktose: true, fisch: true, pilze: true, kohl: true },
-    unwanted: [], preferred: [], allowSpicy: false, pantryBasics: true,
+    unwanted: [], preferred: [], cuisines: [], allowSpicy: false, pantryBasics: true,
     priceOverrides: {}, stock: {}
   });
 
@@ -117,9 +117,16 @@
     return out;
   };
   E.isLactoseFree = (ctx, r) => !r.ings.some(([id]) => ctx.ing[id] && DAIRY_RE.test(ctx.ing[id].n) && !LF_OK_RE.test(ctx.ing[id].n));
+  E.cuisinesOf = r => (r.cuisines && r.cuisines.length ? r.cuisines : ['international']);
+  /** Hauptküche für Abwechslung: erste nicht-deutsche Küche, sonst die erste. */
+  E.primaryCuisine = r => { const c = E.cuisinesOf(r); return c.find(x => x !== 'deutsch') || c[0]; };
+  E.cuisineOk = (ctx, r) => { const w = ctx.settings.cuisines || []; return !w.length || E.cuisinesOf(r).some(c => w.includes(c)); };
+  E.isActive = (ctx, r) => !ctx.blocked[r.id];
   E.isEligible = (ctx, r) =>
-    !ctx.blocked[r.id] && r.time <= ctx.settings.maxTime &&
+    !ctx.blocked[r.id] && r.time <= ctx.settings.maxTime && E.cuisineOk(ctx, r) &&
     (ctx.settings.allowSpicy || !r.spicy) && E.violations(ctx, r).length === 0;
+  /** Gibt einen Hinweistext zurück, wenn das Gericht an anderer Stelle der Woche schon steht (sonst null). */
+  E.canPlace = (plan, idx, id) => { const j = plan.days.findIndex((x, i) => i !== idx && x === id); return j >= 0 ? `Schon für ${E.DAYS[j]} eingeplant` : null; };
 
   // ───────────── Einkaufsliste ─────────────
   /** entries: [{r, persons}] → aggregierte Liste mit Packungsrundung, Vorräten und Kosten. */
@@ -218,12 +225,12 @@
       if (pw.some(w => names.some(n => n.includes(w)))) b -= 1.5;
     }
     const h = ctx.history.findIndex(p => p.days.includes(r.id));
-    if (h === 0) b += 4; else if (h === 1) b += 2;
+    if (h === 0) b += 6; else if (h === 1) b += 3; else if (h === 2) b += 1.5;
     return b;
   };
 
   /** Gesamtbewertung eines Plans (kleiner = besser): Einkaufskosten, Budget, Reste, Überschneidung, Regeln, Vorlieben. */
-  E.scorePlan = (ctx, ids, persons, learned) => {
+  E.scorePlan = (ctx, ids, persons, learned, intl) => {
     const rs = ids.map(id => id ? ctx.recipeMap[id] : null);
     const list = E.shoppingList(ctx, rs.filter(Boolean).map(r => ({ r, persons })));
     const budget = ctx.settings.budget;
@@ -237,6 +244,11 @@
     s += E.analyze(ctx, rs).penalty;
     const veg = rs.filter(r => r && r.veg).length;
     s += 25 * Math.abs(veg - Math.min(ctx.settings.vegTarget, rs.filter(Boolean).length));
+    if (intl) {
+      const cc = {}; rs.forEach(r => { if (r) { const c = E.primaryCuisine(r); cc[c] = (cc[c] || 0) + 1; } });
+      Object.values(cc).forEach(n => { if (n > 2) s += 15 * (n - 2); });
+      s -= Object.keys(cc).length * 2;
+    }
     learned = learned || E.learnPrefs(ctx);
     rs.forEach(r => { if (r) s += E.recipeBonus(ctx, r, learned); });
     return s;
@@ -258,7 +270,15 @@
     const rng = opts.rng || Math.random;
     const persons = opts.persons || ctx.settings.persons;
     const keep = (opts.keep || []).concat(Array(7).fill(null)).slice(0, 7);
-    const pool = ctx.recipes.filter(r => E.isEligible(ctx, r));
+    let pool = ctx.recipes.filter(r => E.isEligible(ctx, r));
+    if (opts.international) {
+      const intl = pool.filter(r => E.cuisinesOf(r).some(c => c !== 'deutsch'));
+      if (intl.length >= 10) pool = intl;
+    }
+    // Gerichte der Vorwoche möglichst meiden (nur wenn genug Alternativen bleiben)
+    const recent = new Set(ctx.history && ctx.history[0] ? ctx.history[0].days : []);
+    const fresh = pool.filter(r => !recent.has(r.id));
+    if (fresh.length >= 14 && fresh.filter(r => r.veg).length >= 5 && fresh.filter(r => !r.veg).length >= 5) pool = fresh;
     const free = [0, 1, 2, 3, 4, 5, 6].filter(i => !keep[i]);
     const usedKeep = new Set(keep.filter(Boolean));
     const vegPool = pool.filter(r => r.veg && !usedKeep.has(r.id)), meatPool = pool.filter(r => !r.veg && !usedKeep.has(r.id));
@@ -283,6 +303,11 @@
       for (const n of [prev, next]) if (n && ((r.carb !== 'keine' && r.carb === n.carb) || r.main === n.main)) return false;
       const rs = ids.map(x => x && ctx.recipeMap[x]).filter(Boolean);
       if (rs.filter(x => x.main === r.main).length >= MAIN_LIMIT) return false;
+      if (opts.international) {
+        const pc = E.primaryCuisine(r);
+        if (rs.filter(x => E.primaryCuisine(x) === pc).length >= 2) return false;
+        for (const n of [prev, next]) if (n && E.primaryCuisine(n) === pc) return false;
+      }
       if (r.carb !== 'keine' && rs.filter(x => x.carb === r.carb).length >= (E.CARB_LIMITS[r.carb] || 3)) return false;
       return true;
     };
@@ -300,7 +325,7 @@
         strict = strict.map(r => [r, E.recipeBonus(ctx, r, learned) + rng() * 3]).sort((a, b) => a[1] - b[1]);
         ids[i] = strict[0][0].id; used.add(ids[i]);
       }
-      let cur = E.scorePlan(ctx, ids, persons, learned);
+      let cur = E.scorePlan(ctx, ids, persons, learned, !!opts.international);
       for (let it = 0; it < 90; it++) { // lokale Suche
         const i = free[Math.floor(rng() * free.length)];
         const r0 = ctx.recipeMap[ids[i]];
@@ -308,7 +333,7 @@
         const cand = src[Math.floor(rng() * src.length)];
         if (!cand || ids.includes(cand.id)) continue;
         const trial = ids.slice(); trial[i] = cand.id;
-        const sc = E.scorePlan(ctx, trial, persons, learned);
+        const sc = E.scorePlan(ctx, trial, persons, learned, !!opts.international);
         if (sc < cur) { cur = sc; ids[i] = cand.id; }
       }
       if (cur < bestScore) { bestScore = cur; bestIds = ids.slice(); }
@@ -376,7 +401,8 @@
     let p = plan; const changes = [];
     plan.days.forEach((id, i) => {
       const r = id && ctx.recipeMap[id];
-      if (r && E.isEligible(ctx, r)) return;
+      const dup = id && p.days.indexOf(id) !== i; // zweites Vorkommen desselben Gerichts
+      if (r && !dup && E.isEligible(ctx, r)) return;
       const alts = E.alternatives(ctx, p, i, { sameType: false, limit: 1 });
       if (alts[0]) { p = E.swapDay(p, i, alts[0].r.id); changes.push({ day: i, from: r ? r.name : null, to: alts[0].r.name }); }
     });
