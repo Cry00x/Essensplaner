@@ -1,6 +1,6 @@
 /* Tests für Budget, Einkaufsliste, Ausschlüsse und Planregeln. Ausführen: node tests/engine.test.js */
 'use strict';
-require('../js/data.js');
+require('../js/data.js'); require('../js/data-ext.js');
 const E = require('../js/engine.js');
 const D = globalThis.DATA;
 let pass = 0, fail = 0;
@@ -31,7 +31,7 @@ for (const r of D.RECIPES) {
     if (/milch|sahne|joghurt|käse|quark|frischkäse|mozzarella/i.test(i.n) && !/kokos/i.test(i.n)) ok(/laktosefrei/i.test(i.n), `${r.name}: ${i.n} muss laktosefrei sein`);
   }
 }
-ok(Object.values(D.ING).every(i => !/butter|schmand|parmesan|pilz|champignon|brokkoli|fisch/i.test(i.n)), 'Katalog ohne verbotene Zutaten');
+ok(Object.values(D.ING).every(i => !/butter|schmand|parmesan|pilz|champignon|brokkoli|fisch/i.test(i.n) || /laktosefrei/i.test(i.n)), 'Katalog ohne verbotene Zutaten (Butter nur laktosefrei)');
 // Negativtest: Erkennung funktioniert tatsächlich
 const bad = { id: 'x', name: 'Test', ings: [], steps: [] };
 const c2 = E.makeCtx({ settings: {}, recipes: [], customIng: { m: { id: 'm', n: 'Champignons', cat: 'Obst und Gemüse', u: 'g', pack: 250, price: 1 }, b: { id: 'b', n: 'Brokkoli', u: 'g' }, k: { id: 'k', n: 'Vollmilch', u: 'ml' }, f: { id: 'f', n: 'Lachsfilet', u: 'g' }, ok: { id: 'ok', n: 'Laktosefreie Milch', u: 'ml' } } });
@@ -195,6 +195,51 @@ ok(E.mondayOf(new Date(2026, 10, 18)) === '2026-11-16', 'Montag der Woche zum 18
 ok(E.mondayOf(new Date(2026, 10, 22)) === '2026-11-16', 'Sonntag gehört zur Woche davor');
 ok(E.addWeeks('2026-12-28', 1) === '2027-01-04', 'Wochenwechsel über Jahresgrenze');
 eq(E.weekNumber('2026-11-16'), 47, 'KW 47');
+
+
+section('Küchenrichtungen, International-Modus, Duplikate, Verlauf');
+ok(D.RECIPES.length >= 70, `Datenbank erweitert (${D.RECIPES.length} Rezepte)`);
+ok(D.RECIPES.every(r => Array.isArray(r.cuisines) && r.cuisines.length && r.cuisines.every(c => D.CUISINES.includes(c))), 'Jedes Rezept hat gültige Küchenrichtung(en)');
+ok(D.CUISINES.length === 13 && ['deutsch', 'italienisch', 'griechisch', 'türkisch', 'mexikanisch', 'asiatisch', 'chinesisch', 'japanisch', 'indisch', 'amerikanisch', 'französisch', 'mediterran', 'international'].every(c => D.CUISINES.includes(c)), 'Alle geforderten Küchen vorhanden');
+ok(D.CUISINES.every(c => D.RECIPES.some(r => r.cuisines.includes(c))), 'Jede Küche hat mindestens ein Rezept');
+const ital = base({ settings: { cuisines: ['italienisch'] } });
+const pI = E.generatePlan(ital, { rng: E.rng(1) });
+ok(pI.days.every(id => ital.recipeMap[id].cuisines.includes('italienisch')), 'Küchenfilter: nur italienische Gerichte');
+const intlCtx = base();
+for (let s = 1; s <= 25; s++) {
+  const p = E.generatePlan(intlCtx, { rng: E.rng(s), international: true });
+  const rs = p.days.map(id => intlCtx.recipeMap[id]);
+  ok(new Set(p.days).size === 7, `International ${s}: keine Dubletten`);
+  ok(rs.every(r => r.cuisines.some(c => c !== 'deutsch')), `International ${s}: keine rein deutschen Gerichte`);
+  const cc = {}; rs.forEach(r => { const c = E.primaryCuisine(r); cc[c] = (cc[c] || 0) + 1; });
+  ok(Math.max(...Object.values(cc)) <= 2, `International ${s}: höchstens 2× dieselbe Küche (${JSON.stringify(cc)})`);
+  ok(rs.every(r => E.isEligible(intlCtx, r)), `International ${s}: Ernährungsregeln eingehalten`);
+  ok(E.summary(intlCtx, p).total <= 120, `International ${s}: im Budget`);
+}
+// Duplikatschutz beim manuellen Setzen
+const pd = E.generatePlan(intlCtx, { rng: E.rng(2) });
+ok(E.canPlace(pd, 0, pd.days[3]) !== null && /Schon für/.test(E.canPlace(pd, 0, pd.days[3])), 'canPlace meldet Duplikat');
+ok(E.canPlace(pd, 3, pd.days[3]) === null, 'canPlace erlaubt das Gericht am eigenen Tag');
+ok(E.canPlace(pd, 0, 'unbekannt') === null, 'canPlace erlaubt neues Gericht');
+const dupPlan = Object.assign({}, pd, { days: [pd.days[0], pd.days[0], ...pd.days.slice(2)] });
+const fixed = E.repairPlan(intlCtx, dupPlan);
+ok(new Set(fixed.plan.days).size === 7, 'Reparatur entfernt doppeltes Gericht');
+ok(fixed.plan.days[0] === pd.days[0], 'Reparatur behält die erste Fundstelle');
+// Aktiv/Inaktiv
+const inactiveIds = D.RECIPES.filter(r => r.veg).slice(0, 20).map(r => r.id); const inact = {}; inactiveIds.forEach(i => { inact[i] = true; });
+const ia = base({ blocked: inact });
+for (let s = 1; s <= 15; s++) ok(E.generatePlan(ia, { rng: E.rng(s) }).days.every(id => !inact[id]), `Inaktive Rezepte nie geplant (Lauf ${s})`);
+ok(E.alternatives(ia, E.generatePlan(ia, { rng: E.rng(1) }), 0, { limit: 30, sameType: false }).every(a => !inact[a.r.id]), 'Alternativen enthalten keine inaktiven Rezepte');
+// Verlauf: Gerichte der Vorwoche werden gemieden
+let reused = 0, total = 0;
+for (let s = 1; s <= 30; s++) {
+  const wk1 = E.generatePlan(base(), { rng: E.rng(s) });
+  const wk2 = E.generatePlan(base({ history: [{ weekStart: '2026-11-09', days: wk1.days }] }), { rng: E.rng(s + 100) });
+  reused += wk2.days.filter(id => wk1.days.includes(id)).length; total += 7;
+}
+ok(reused === 0, `Vorwoche wird nicht wiederholt (${reused} Wiederholungen in ${total} Gerichten)`);
+const eng = E.makeCtx({ settings: { cuisines: [] }, recipes: D.RECIPES });
+ok(E.cuisinesOf({}).join() === 'international', 'Ohne Küchenangabe: international');
 
 console.log(`\n${pass} bestanden, ${fail} fehlgeschlagen`);
 process.exit(fail ? 1 : 0);
